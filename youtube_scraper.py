@@ -3,7 +3,6 @@ import re
 from googleapiclient.discovery import build
 
 # --- Prompt user for input ---
-YOUTUBE_API_KEY = "AIzaSyAhLyD2Uesduc1OhYKEE-19S0b4Qs5cso8"
 channel_input = input("Enter the YouTube Channel URL, handle, or Channel ID: ").strip()
 RESOURCES_PATH = "resources_youtube.json"
 
