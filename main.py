@@ -2,6 +2,7 @@ import os
 import json
 import asyncio
 import logging
+import random
 import discord
 from discord.ext import commands
 from openai import OpenAI
@@ -27,33 +28,54 @@ TAVILY_API_KEY = config.get("TAVILY_API_KEY")
 if not (OPENAI_API_KEY and DISCORD_TOKEN and TAVILY_API_KEY):
     raise ValueError("config.json must contain OPENAI_API_KEY, DISCORD_TOKEN, and TAVILY_API_KEY")
 
+# Load FPV resources
+RESOURCES_PATH = "resources.json"
+if not os.path.exists(RESOURCES_PATH):
+    raise FileNotFoundError(f"Missing {RESOURCES_PATH}. Please create it.")
+
+with open(RESOURCES_PATH, "r") as f:
+    resources = json.load(f)
+
+FPV_SITES = resources.get("fpv_sites", [])
+PDF_RESOURCES = resources.get("pdfs", [])
+
+
+FUN_RESPONSES = {
+    "motors": [
+        "Spinning those motors up? Hope your props are tight! 🌀",
+        "Check the motor directions carefully — we don't want any surprises in the air!"
+    ],
+    "pid": [
+        "Ah, PID tuning! Time to become the Zen master of your quad. 🧘‍♂️",
+        "Remember: gentle tweaks, big differences. Patience is key!"
+    ],
+    "failsafe": [
+        "Failsafe is your safety net — always double-check it before flying! 🛡️"
+    ]
+}
+
+
 # ---- Clients ----
 openai_client = OpenAI(api_key=OPENAI_API_KEY)
 tavily = TavilyClient(api_key=TAVILY_API_KEY)
 
-FPV_SITES = [
-    "betaflight.com",
-    "github.com/betaflight",
-    "inavflight.org",
-    "oscarliang.com",
-    "intofpv.com",
-    "rotorbuilds.com",
-    "mateksys.com",
-    "holybro.com",
-    "iflight-rc.com",
-    "diatone.us"
-]
 
 SYSTEM_PROMPT = """
-You are an FPV drone expert helping pilots troubleshoot, configure, and tune their drones.
+You are a friendly FPV drone expert helping pilots troubleshoot, configure, and tune their drones.
 Rules:
-- Ask for more information, if the user is not specific
+- Ask for more information, if the user is not specific.
 - Prefer trusted FPV resources provided.
 - If none found, say so and suggest where to look.
 - Explain step-by-step in clear language.
 - Cite sources (PDF name or URL).
 - Never invent or guess pinouts, firmware targets, or tuning values.
+Personality Guidelines:
+- Be friendly, enthusiastic, and encouraging.
+- Occasionally include a light joke, pun, or motivational comment.
+- Celebrate successes: if a pilot asks a correct or clever question, compliment them.
+- If a pilot asks something basic, explain gently and encourage learning.
 """
+
 
 # ---- Discord bot setup ----
 intents = discord.Intents.default()
@@ -106,12 +128,12 @@ async def call_openai_chat_system(user_question: str, context: str) -> str:
     def sync_call():
         try:
             resp = openai_client.chat.completions.create(
-                model="gpt-4o-mini",
+                model="gpt-5-mini",
                 messages=[
                     {"role": "system", "content": SYSTEM_PROMPT},
                     {"role": "user", "content": f"Question: {user_question}\n\nContext:\n{context}"}
-                ],
-                temperature=0
+                ]
+                #temperature=0
             )
             return resp.choices[0].message.content
         except Exception as e:
@@ -119,6 +141,20 @@ async def call_openai_chat_system(user_question: str, context: str) -> str:
             return f"[Error calling LLM: {e}]"
 
     return await asyncio.to_thread(sync_call)
+
+def add_fun_reply(answer: str) -> str:
+    for keyword, messages in FUN_RESPONSES.items():
+        if keyword.lower() in answer.lower():
+            return answer + "\n\n" + random.choice(messages)
+    return answer
+
+CELEBRATION_KEYWORDS = ["successfully flashed", "motors spinning", "bind completed"]
+
+def add_celebration(answer: str) -> str:
+    for keyword in CELEBRATION_KEYWORDS:
+        if keyword.lower() in answer.lower():
+            return answer + "\n\n🎉 Woohoo! Looks like your FPV skills are leveling up!"
+    return answer
 
 
 # ---- Discord commands ----
@@ -135,10 +171,28 @@ async def fpv_cmd(ctx, *, question: str):
             web_context = await asyncio.to_thread(fpv_search_sync, question)
             context_text = web_context if web_context else "(no web resources found)"
             answer = await call_openai_chat_system(question, context_text)
+            answer = add_fun_reply(answer)
+            answer = add_celebration(answer)
             await send_long_message(ctx, answer)
         except Exception as exc:
             logger.exception("Unexpected error in !fpv")
             await ctx.send(f"An error occurred: {exc}")
+
+@bot.command()
+async def dronejoke(ctx):
+    jokes = [
+        "Why did the FPV pilot cross the road? To get a better line of sight! 🛸",
+        "Why don’t drones tell secrets? They always leak altitude. 😆",
+    ]
+    await ctx.send(random.choice(jokes))
+
+@bot.command()
+async def motivation(ctx):
+    messages = [
+        "Keep calm and tune PIDs! You're doing great. 🚀",
+        "Every crash is just another lesson. Stay positive and fly on! 🛩️"
+    ]
+    await ctx.send(random.choice(messages))
 
 
 # ---- Run bot ----
